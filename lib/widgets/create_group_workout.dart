@@ -19,15 +19,47 @@ class _CreateGroupWorkoutPageState extends State<CreateGroupWorkoutPage> {
   List<String> _inviteEmails = [];
   bool _isLoading = false;
 
+  // Helper function to find workout plan by display name
+  String _getWorkoutPlanIdByDisplayName(String displayName, List<String> displayNames, List<dynamic> workoutPlans) {
+    int index = displayNames.indexOf(displayName);
+    if (index >= 0 && index < workoutPlans.length) {
+      return workoutPlans[index].name; // Using name as ID since we don't have a separate ID field
+    }
+    return '';
+  }
+
   @override
   Widget build(BuildContext context) {
     final authService = Provider.of<AuthService>(context, listen: false);
     final storage = Provider.of<StorageService>(context, listen: false);
     final workoutPlans = storage.getWorkoutPlans();
 
+    // Create unique display names for dropdown
+    final displayNames = <String>[];
+    final nameCounts = <String, int>{};
+
+    for (var plan in workoutPlans) {
+      if (nameCounts.containsKey(plan.name)) {
+        nameCounts[plan.name] = nameCounts[plan.name]! + 1;
+        displayNames.add('${plan.name} (${nameCounts[plan.name]})');
+      } else {
+        nameCounts[plan.name] = 1;
+        displayNames.add(plan.name);
+      }
+    }
+
+    // Ensure we have a valid initial selection
     if (workoutPlans.isNotEmpty && _workoutPlanId.isEmpty) {
-      // Get first workout plan - adapt this to your model structure
-      _workoutPlanId = workoutPlans.first.name; // Use name or another unique identifier
+      _workoutPlanId = workoutPlans.first.name;
+    }
+
+    // Find the display name for the currently selected workout plan
+    String? currentDisplayName;
+    for (int i = 0; i < workoutPlans.length; i++) {
+      if (workoutPlans[i].name == _workoutPlanId) {
+        currentDisplayName = displayNames[i];
+        break;
+      }
     }
 
     return Scaffold(
@@ -56,17 +88,19 @@ class _CreateGroupWorkoutPageState extends State<CreateGroupWorkoutPage> {
                 SizedBox(height: 20),
                 DropdownButtonFormField<String>(
                   decoration: InputDecoration(labelText: 'Workout Plan'),
-                  value: _workoutPlanId.isNotEmpty ? _workoutPlanId : null,
-                  items: workoutPlans.map((workoutPlan) {
+                  value: currentDisplayName,
+                  items: displayNames.map((displayName) {
                     return DropdownMenuItem(
-                      value: workoutPlan.name, // Use name or another unique identifier
-                      child: Text(workoutPlan.name),
+                      value: displayName,
+                      child: Text(displayName),
                     );
                   }).toList(),
                   onChanged: (value) {
-                    setState(() {
-                      _workoutPlanId = value!;
-                    });
+                    if (value != null) {
+                      setState(() {
+                        _workoutPlanId = _getWorkoutPlanIdByDisplayName(value, displayNames, workoutPlans);
+                      });
+                    }
                   },
                   validator: (value) {
                     if (value == null || value.isEmpty) {
@@ -86,7 +120,6 @@ class _CreateGroupWorkoutPageState extends State<CreateGroupWorkoutPage> {
                     ),
                     TextButton(
                       onPressed: () async {
-                        // Keep the existing date picker code
                         final date = await showDatePicker(
                           context: context,
                           initialDate: _scheduledDate,

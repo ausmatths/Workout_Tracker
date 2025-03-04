@@ -1,12 +1,15 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:firebase_core/firebase_core.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'firebase_options.dart';
 import 'data/workout_data.dart';
 import 'data/storage_service.dart';
 import 'data/fake_data.dart';
 import 'services/workout_service.dart';
 import 'services/auth_service.dart';
+import 'services/firestore_service.dart';
 import 'providers/group_workout_provider.dart';
 import 'widgets/workout_history_page.dart';
 import 'widgets/recent_performance_widget.dart';
@@ -23,15 +26,30 @@ void main() async {
     );
     print("Firebase initialized successfully");
 
+    // Create services
+    final authService = AuthService();
+    final firestoreService = FirestoreService();
     final storage = StorageService();
     await storage.init();
 
-    // Initialize service
+    // Initialize workout service
     final workoutService = WorkoutService(storage);
-    final authService = AuthService();
 
-    // Add fake data for testing
-    if (storage.getWorkoutPlans().isEmpty) {
+    // For debugging: Print auth state
+    final currentUser = FirebaseAuth.instance.currentUser;
+    print("Initial auth state: ${currentUser != null ? 'Signed in as ${currentUser.uid}' : 'Not signed in'}");
+
+    // Enable Firestore debug logging in development
+    bool isDebugMode = true; // Set to false for production
+    if (isDebugMode) {
+      FirebaseFirestore.instance.settings = Settings(
+        persistenceEnabled: true,
+        cacheSizeBytes: Settings.CACHE_SIZE_UNLIMITED,
+      );
+    }
+
+    // Add fake data for testing - ONLY if in debug mode
+    if (isDebugMode && storage.getWorkoutPlans().isEmpty) {
       await storage.addWorkoutPlan(basicWorkoutPlan);
       for (var workout in sampleWorkouts) {
         await storage.addWorkout(workout);
@@ -42,6 +60,7 @@ void main() async {
       storage: storage,
       service: workoutService,
       authService: authService,
+      firestoreService: firestoreService,
     ));
   } catch (e, stackTrace) {
     print("Error during initialization: $e");
@@ -57,6 +76,12 @@ void main() async {
               Text('Initialization Error', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
               SizedBox(height: 20),
               Text('Error: $e', style: TextStyle(color: Colors.red)),
+              ElevatedButton(
+                onPressed: () {
+                  main(); // Attempt to reinitialize
+                },
+                child: Text('Retry'),
+              ),
             ],
           ),
         ),
@@ -69,12 +94,14 @@ class MyApp extends StatelessWidget {
   final StorageService storage;
   final WorkoutService service;
   final AuthService authService;
+  final FirestoreService firestoreService;
 
   const MyApp({
     Key? key,
     required this.storage,
     required this.service,
     required this.authService,
+    required this.firestoreService,
   }) : super(key: key);
 
   @override
@@ -85,11 +112,12 @@ class MyApp extends StatelessWidget {
           create: (_) => WorkoutData(storage),
         ),
         ChangeNotifierProvider(
-          create: (_) => GroupWorkoutProvider(),  // Removed the authService parameter
+          create: (_) => GroupWorkoutProvider(),
         ),
         Provider.value(value: service),
         Provider.value(value: authService),
         Provider.value(value: storage),
+        Provider.value(value: firestoreService),
       ],
       child: MaterialApp(
         title: 'Workout Tracker',
@@ -97,27 +125,26 @@ class MyApp extends StatelessWidget {
           primarySwatch: Colors.blue,
           useMaterial3: true,
         ),
-        home: AuthWrapper(storage: storage),
+        home: AuthGate(storage: storage),
       ),
     );
   }
 }
 
-class AuthWrapper extends StatelessWidget {
+class AuthGate extends StatelessWidget {
   final StorageService storage;
 
-  const AuthWrapper({
+  const AuthGate({
     Key? key,
     required this.storage,
   }) : super(key: key);
 
   @override
   Widget build(BuildContext context) {
-    final authService = Provider.of<AuthService>(context, listen: false);
-
-    return StreamBuilder<dynamic>(
-      stream: authService.authStateChanges,
+    return StreamBuilder<User?>(
+      stream: FirebaseAuth.instance.authStateChanges(),
       builder: (context, snapshot) {
+        // Show loading indicator while waiting for auth state
         if (snapshot.connectionState == ConnectionState.waiting) {
           return const Scaffold(
             body: Center(
@@ -126,11 +153,31 @@ class AuthWrapper extends StatelessWidget {
           );
         }
 
-        if (snapshot.hasData) {
-          return HomeScreen();
-        }
+        // Initialize the GroupWorkoutProvider when authentication state changes
+        final groupWorkoutProvider = Provider.of<GroupWorkoutProvider>(context, listen: false);
 
-        return AuthPage();
+        // Check if user is authenticated
+        if (snapshot.hasData) {
+          print("Auth state changed: User authenticated with ID: ${snapshot.data!.uid}");
+
+          // Fetch data after authentication
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            try {
+              groupWorkoutProvider.fetchGroupWorkouts();
+              groupWorkoutProvider.fetchInvites();
+            } catch (e) {
+              print("Error fetching data after authentication: $e");
+            }
+          });
+
+          // User is authenticated, show home screen
+          return HomeScreen();
+        } else {
+          print("Auth state changed: User is not authenticated");
+
+          // User is not authenticated, show login screen
+          return AuthPage();
+        }
       },
     );
   }
@@ -145,7 +192,28 @@ class _HomeScreenState extends State<HomeScreen> {
   int _selectedIndex = 0;
 
   @override
+  void initState() {
+    super.initState();
+    _verifyAuthentication();
+  }
+
+  void _verifyAuthentication() {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) {
+      print("WARNING: HomeScreen accessed without authentication!");
+    } else {
+      print("HomeScreen accessed by user: ${user.uid}");
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
+    // Check if user is still authenticated
+    if (FirebaseAuth.instance.currentUser == null) {
+      // If authentication was lost, redirect to AuthPage
+      return AuthPage();
+    }
+
     List<Widget> _pages = [
       Scaffold(
         body: SafeArea(
@@ -161,6 +229,36 @@ class _HomeScreenState extends State<HomeScreen> {
     ];
 
     return Scaffold(
+      appBar: AppBar(
+        title: Text(_selectedIndex == 0 ? 'My Workouts' : 'Group Workouts'),
+        actions: [
+          // Show user email or name if available
+          Padding(
+            padding: const EdgeInsets.all(8.0),
+            child: Center(
+              child: Text(
+                FirebaseAuth.instance.currentUser?.email?.split('@').first ?? 'User',
+                style: TextStyle(fontSize: 14),
+              ),
+            ),
+          ),
+          IconButton(
+            icon: Icon(Icons.logout),
+            onPressed: () async {
+              try {
+                await FirebaseAuth.instance.signOut();
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(content: Text('Signed out successfully')),
+                );
+              } catch (e) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(content: Text('Error signing out: $e')),
+                );
+              }
+            },
+          ),
+        ],
+      ),
       body: _pages[_selectedIndex],
       bottomNavigationBar: BottomNavigationBar(
         items: const <BottomNavigationBarItem>[
