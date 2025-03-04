@@ -18,20 +18,29 @@ class WorkoutProvider extends ChangeNotifier {
   WorkoutPlan? get selectedPlan => _selectedPlan;
 
   Future<void> _loadInitialData() async {
-    await Future.wait([
-      _loadWorkouts(),
-      _loadWorkoutPlans(),
-    ]);
-  }
-
-  Future<void> _loadWorkouts() async {
-    _workouts = await _repository.getRecentWorkouts(30); // Load last 30 days
+    _loadWorkouts();
+    _loadWorkoutPlans();
     notifyListeners();
   }
 
-  Future<void> _loadWorkoutPlans() async {
-    _plans = await _repository.getAllWorkoutPlans();
-    notifyListeners();
+  void _loadWorkouts() {
+    try {
+      _workouts = _repository.getRecentWorkouts(30); // Load last 30 days
+      print('Loaded ${_workouts.length} workouts');
+    } catch (e) {
+      print('Error loading workouts: $e');
+      _workouts = [];
+    }
+  }
+
+  void _loadWorkoutPlans() {
+    try {
+      _plans = _repository.getAllWorkoutPlans();
+      print('Loaded ${_plans.length} workout plans');
+    } catch (e) {
+      print('Error loading workout plans: $e');
+      _plans = [];
+    }
   }
 
   void selectWorkoutPlan(WorkoutPlan plan) {
@@ -40,17 +49,31 @@ class WorkoutProvider extends ChangeNotifier {
   }
 
   Future<void> saveWorkout(Workout workout) async {
-    await _repository.saveWorkout(workout);
-    await _loadWorkouts();
+    try {
+      await _repository.saveWorkout(workout);
+      _loadWorkouts();
+      notifyListeners();
+      print('Workout saved successfully');
+    } catch (e) {
+      print('Error saving workout: $e');
+      rethrow;
+    }
   }
 
   Future<bool> downloadWorkoutPlan(String url) async {
-    final plan = await _repository.downloadWorkoutPlan(url);
-    if (plan != null) {
-      await _loadWorkoutPlans();
-      return true;
+    try {
+      final plan = await _repository.downloadWorkoutPlan(url);
+      if (plan != null) {
+        _loadWorkoutPlans();
+        notifyListeners();
+        print('Workout plan downloaded successfully');
+        return true;
+      }
+      return false;
+    } catch (e) {
+      print('Error downloading workout plan: $e');
+      return false;
     }
-    return false;
   }
 
   List<Workout> getWorkoutsForLastDays(int days) {
@@ -58,5 +81,13 @@ class WorkoutProvider extends ChangeNotifier {
     return _workouts
         .where((workout) => workout.date.isAfter(startDate))
         .toList();
+  }
+
+  // Reload data (useful after auth state changes)
+  void refreshData() {
+    _loadWorkouts();
+    _loadWorkoutPlans();
+    notifyListeners();
+    print('Workout data refreshed');
   }
 }

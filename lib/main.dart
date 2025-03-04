@@ -35,6 +35,16 @@ void main() async {
     // Initialize workout service
     final workoutService = WorkoutService(storage);
 
+    // Check if user is already signed in, if not sign in anonymously
+    if (FirebaseAuth.instance.currentUser == null) {
+      try {
+        final credential = await authService.signInAnonymously();
+        print("Signed in anonymously with user ID: ${credential.user?.uid}");
+      } catch (e) {
+        print("Error signing in anonymously: $e");
+      }
+    }
+
     // For debugging: Print auth state
     final currentUser = FirebaseAuth.instance.currentUser;
     print("Initial auth state: ${currentUser != null ? 'Signed in as ${currentUser.uid}' : 'Not signed in'}");
@@ -155,10 +165,12 @@ class AuthGate extends StatelessWidget {
 
         // Initialize the GroupWorkoutProvider when authentication state changes
         final groupWorkoutProvider = Provider.of<GroupWorkoutProvider>(context, listen: false);
+        final authService = Provider.of<AuthService>(context, listen: false);
 
         // Check if user is authenticated
         if (snapshot.hasData) {
           print("Auth state changed: User authenticated with ID: ${snapshot.data!.uid}");
+          print("Is user anonymous? ${snapshot.data!.isAnonymous}");
 
           // Fetch data after authentication
           WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -175,8 +187,29 @@ class AuthGate extends StatelessWidget {
         } else {
           print("Auth state changed: User is not authenticated");
 
-          // User is not authenticated, show login screen
-          return AuthPage();
+          // Try to sign in anonymously if not authenticated
+          WidgetsBinding.instance.addPostFrameCallback((_) async {
+            try {
+              await authService.signInAnonymously();
+              print("Signed in anonymously from AuthGate");
+            } catch (e) {
+              print("Error signing in anonymously from AuthGate: $e");
+            }
+          });
+
+          // Show loading while attempting anonymous sign-in
+          return const Scaffold(
+            body: Center(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  CircularProgressIndicator(),
+                  SizedBox(height: 20),
+                  Text("Preparing your workout experience...")
+                ],
+              ),
+            ),
+          );
         }
       },
     );
@@ -202,7 +235,7 @@ class _HomeScreenState extends State<HomeScreen> {
     if (user == null) {
       print("WARNING: HomeScreen accessed without authentication!");
     } else {
-      print("HomeScreen accessed by user: ${user.uid}");
+      print("HomeScreen accessed by user: ${user.uid} (Anonymous: ${user.isAnonymous})");
     }
   }
 
@@ -213,6 +246,10 @@ class _HomeScreenState extends State<HomeScreen> {
       // If authentication was lost, redirect to AuthPage
       return AuthPage();
     }
+
+    // Get current user
+    final user = FirebaseAuth.instance.currentUser!;
+    final isAnonymous = user.isAnonymous;
 
     List<Widget> _pages = [
       Scaffold(
@@ -232,24 +269,51 @@ class _HomeScreenState extends State<HomeScreen> {
       appBar: AppBar(
         title: Text(_selectedIndex == 0 ? 'My Workouts' : 'Group Workouts'),
         actions: [
-          // Show user email or name if available
+          // Show user status (anonymous or email)
           Padding(
             padding: const EdgeInsets.all(8.0),
             child: Center(
               child: Text(
-                FirebaseAuth.instance.currentUser?.email?.split('@').first ?? 'User',
+                isAnonymous
+                    ? 'Guest User'
+                    : (user.email?.split('@').first ?? 'User'),
                 style: TextStyle(fontSize: 14),
               ),
             ),
           ),
+          // If anonymous, show option to create account
+          if (isAnonymous)
+            IconButton(
+              icon: Icon(Icons.person_add),
+              tooltip: 'Create Account',
+              onPressed: () {
+                // Navigate to account creation page
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (context) => AuthPage()),
+                );
+              },
+            ),
           IconButton(
             icon: Icon(Icons.logout),
             onPressed: () async {
               try {
                 await FirebaseAuth.instance.signOut();
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(content: Text('Signed out successfully')),
-                );
+
+                // If user was anonymous, try to sign in anonymously again
+                if (isAnonymous) {
+                  try {
+                    final authService = Provider.of<AuthService>(context, listen: false);
+                    await authService.signInAnonymously();
+                    print("Signed in anonymously after sign out");
+                  } catch (e) {
+                    print("Error signing in anonymously after sign out: $e");
+                  }
+                } else {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(content: Text('Signed out successfully')),
+                  );
+                }
               } catch (e) {
                 ScaffoldMessenger.of(context).showSnackBar(
                   SnackBar(content: Text('Error signing out: $e')),

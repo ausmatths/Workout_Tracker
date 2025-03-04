@@ -14,28 +14,44 @@ class FirebaseWrapper extends StatefulWidget {
 
 class _FirebaseWrapperState extends State<FirebaseWrapper> {
   bool _hasCheckedAuth = false;
+  AuthService? _authService;
 
   @override
-  void initState() {
-    super.initState();
-    _checkAuthState();
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    // Store the auth service reference when it's safe to do so
+    _authService = Provider.of<AuthService>(context, listen: false);
+    // Only run check auth state once
+    if (!_hasCheckedAuth) {
+      _checkAuthState();
+    }
   }
 
   Future<void> _checkAuthState() async {
-    final authService = Provider.of<AuthService>(context, listen: false);
+    if (_authService == null) return;
 
-    // Log authentication status
-    final isAuthenticated = authService.isAuthenticated();
+    // Check if user is already authenticated
+    final isAuthenticated = _authService!.isAuthenticated();
     print('Firebase authentication check: user is authenticated: $isAuthenticated');
 
-    if (isAuthenticated) {
-      final userId = authService.getUserId();
+    // If not authenticated, sign in anonymously
+    if (!isAuthenticated) {
+      try {
+        final credential = await _authService!.signInAnonymously();
+        print('User signed in anonymously with ID: ${credential.user?.uid}');
+      } catch (e) {
+        print('Error signing in anonymously: $e');
+      }
+    } else {
+      final userId = _authService!.getUserId();
       print('Authenticated user ID: $userId');
     }
 
-    setState(() {
-      _hasCheckedAuth = true;
-    });
+    if (mounted) {
+      setState(() {
+        _hasCheckedAuth = true;
+      });
+    }
   }
 
   @override

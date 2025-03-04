@@ -12,10 +12,26 @@ class _AuthPageState extends State<AuthPage> {
   final _formKey = GlobalKey<FormState>();
   bool _isLogin = true;
   bool _isLoading = false;
+  bool _isAnonymousUpgrade = false;
   String _email = '';
   String _password = '';
   String _displayName = '';
   String _errorMessage = '';
+
+  @override
+  void initState() {
+    super.initState();
+    _checkCurrentUser();
+  }
+
+  void _checkCurrentUser() {
+    final currentUser = FirebaseAuth.instance.currentUser;
+    if (currentUser != null && currentUser.isAnonymous) {
+      setState(() {
+        _isAnonymousUpgrade = true;
+      });
+    }
+  }
 
   void _submit() async {
     if (!_formKey.currentState!.validate()) {
@@ -30,8 +46,35 @@ class _AuthPageState extends State<AuthPage> {
 
     try {
       final authService = Provider.of<AuthService>(context, listen: false);
+      final currentUser = FirebaseAuth.instance.currentUser;
 
-      if (_isLogin) {
+      if (_isAnonymousUpgrade) {
+        // Convert anonymous account to permanent account
+        if (currentUser != null && currentUser.isAnonymous) {
+          // Create email credential
+          final credential = EmailAuthProvider.credential(
+            email: _email,
+            password: _password,
+          );
+
+          // Link anonymous account with email credential
+          await currentUser.linkWithCredential(credential);
+
+          // Update display name if provided
+          if (_displayName.isNotEmpty) {
+            await currentUser.updateDisplayName(_displayName);
+          }
+
+          // Refresh user
+          await currentUser.reload();
+
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Account successfully created!')),
+          );
+
+          Navigator.pop(context); // Return to previous screen
+        }
+      } else if (_isLogin) {
         // Login
         await authService.signInWithEmailAndPassword(_email, _password);
       } else {
@@ -69,6 +112,12 @@ class _AuthPageState extends State<AuthPage> {
         return 'Email address is invalid.';
       case 'operation-not-allowed':
         return 'This operation is not allowed.';
+      case 'credential-already-in-use':
+        return 'This email is already linked to another account.';
+      case 'provider-already-linked':
+        return 'This authentication method is already linked to your account.';
+      case 'requires-recent-login':
+        return 'Please sign out and sign in again before upgrading your account.';
       default:
         return 'An error occurred: $code';
     }
@@ -76,9 +125,12 @@ class _AuthPageState extends State<AuthPage> {
 
   @override
   Widget build(BuildContext context) {
+    final currentUser = FirebaseAuth.instance.currentUser;
+    final isAnonymous = currentUser?.isAnonymous ?? false;
+
     return Scaffold(
       appBar: AppBar(
-        title: Text(_isLogin ? 'Login' : 'Register'),
+        title: Text(_isAnonymousUpgrade ? 'Create Account' : (_isLogin ? 'Login' : 'Register')),
       ),
       body: Padding(
         padding: const EdgeInsets.all(16.0),
@@ -88,6 +140,28 @@ class _AuthPageState extends State<AuthPage> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
+                if (_isAnonymousUpgrade)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 24.0),
+                    child: Card(
+                      color: Colors.blue.shade50,
+                      child: Padding(
+                        padding: const EdgeInsets.all(16.0),
+                        child: Column(
+                          children: [
+                            Icon(Icons.info_outline, color: Colors.blue, size: 28),
+                            SizedBox(height: 8),
+                            Text(
+                              'You\'re currently using the app as a guest. Create an account to save your data permanently.',
+                              textAlign: TextAlign.center,
+                              style: TextStyle(fontSize: 16),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+
                 if (_errorMessage.isNotEmpty)
                   Padding(
                     padding: const EdgeInsets.only(bottom: 16.0),
@@ -123,7 +197,7 @@ class _AuthPageState extends State<AuthPage> {
                     _password = value!;
                   },
                 ),
-                if (!_isLogin) ...[
+                if (!_isLogin || _isAnonymousUpgrade) ...[
                   SizedBox(height: 12),
                   TextFormField(
                     decoration: InputDecoration(labelText: 'Display Name'),
@@ -143,26 +217,34 @@ class _AuthPageState extends State<AuthPage> {
                   onPressed: _isLoading ? null : _submit,
                   child: _isLoading
                       ? CircularProgressIndicator()
-                      : Text(_isLogin ? 'Login' : 'Register'),
+                      : Text(_isAnonymousUpgrade
+                      ? 'Create Account'
+                      : (_isLogin ? 'Login' : 'Register')),
                 ),
                 SizedBox(height: 12),
-                TextButton(
-                  onPressed: _isLoading
-                      ? null
-                      : () {
-                    setState(() {
-                      _isLogin = !_isLogin;
-                      _errorMessage = '';
-                    });
-                  },
-                  child: Text(
-                    _isLogin
-                        ? 'Don\'t have an account? Register'
-                        : 'Already have an account? Login',
+                if (!_isAnonymousUpgrade)
+                  TextButton(
+                    onPressed: _isLoading
+                        ? null
+                        : () {
+                      setState(() {
+                        _isLogin = !_isLogin;
+                        _errorMessage = '';
+                      });
+                    },
+                    child: Text(
+                      _isLogin
+                          ? 'Don\'t have an account? Register'
+                          : 'Already have an account? Login',
+                    ),
                   ),
-                ),
-                SizedBox(height: 24),
-                if (_isLogin)
+                SizedBox(height: 12),
+                if (_isAnonymousUpgrade)
+                  TextButton(
+                    onPressed: () => Navigator.pop(context),
+                    child: Text('Continue as Guest'),
+                  )
+                else if (_isLogin)
                   TextButton(
                     onPressed: _isLoading
                         ? null

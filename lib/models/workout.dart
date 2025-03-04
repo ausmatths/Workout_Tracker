@@ -11,9 +11,13 @@ class Workout extends HiveObject {
   @HiveField(1)
   final List<ExerciseResult> results;
 
+  @HiveField(2)
+  String? userId;
+
   Workout({
     required this.date,
     required this.results,
+    this.userId,
   });
 
   int get successfulResultsCount =>
