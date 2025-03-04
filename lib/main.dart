@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:firebase_core/firebase_core.dart';
@@ -182,8 +183,8 @@ class AuthGate extends StatelessWidget {
             }
           });
 
-          // User is authenticated, show home screen
-          return HomeScreen();
+          // User is authenticated, show home screen with the current user
+          return HomeScreen(user: snapshot.data!);
         } else {
           print("Auth state changed: User is not authenticated");
 
@@ -217,39 +218,61 @@ class AuthGate extends StatelessWidget {
 }
 
 class HomeScreen extends StatefulWidget {
+  final User user;
+
+  const HomeScreen({Key? key, required this.user}) : super(key: key);
+
   @override
   _HomeScreenState createState() => _HomeScreenState();
 }
 
 class _HomeScreenState extends State<HomeScreen> {
   int _selectedIndex = 0;
+  late User _currentUser;
+  StreamSubscription<User?>? _authSubscription;
+  bool _isDisposed = false;
 
   @override
   void initState() {
     super.initState();
+    _currentUser = widget.user;
     _verifyAuthentication();
   }
 
+  @override
+  void dispose() {
+    _isDisposed = true;
+    _authSubscription?.cancel();
+    super.dispose();
+  }
+
   void _verifyAuthentication() {
-    final user = FirebaseAuth.instance.currentUser;
-    if (user == null) {
-      print("WARNING: HomeScreen accessed without authentication!");
-    } else {
-      print("HomeScreen accessed by user: ${user.uid} (Anonymous: ${user.isAnonymous})");
-    }
+    print("HomeScreen accessed by user: ${_currentUser.uid} (Anonymous: ${_currentUser.isAnonymous})");
   }
 
   @override
   Widget build(BuildContext context) {
-    // Check if user is still authenticated
-    if (FirebaseAuth.instance.currentUser == null) {
+    // Get current user
+    final currentUser = FirebaseAuth.instance.currentUser;
+    if (currentUser == null) {
       // If authentication was lost, redirect to AuthPage
       return AuthPage();
     }
 
-    // Get current user
-    final user = FirebaseAuth.instance.currentUser!;
-    final isAnonymous = user.isAnonymous;
+    // Use the current user directly rather than keeping state
+    final isAnonymous = currentUser.isAnonymous;
+    final displayName = currentUser.displayName;
+    final email = currentUser.email;
+
+    // Determine user display text with priority: displayName > email > "User"
+    String userDisplayText = "User";
+    if (isAnonymous) {
+      userDisplayText = "Guest User";
+    } else if (displayName != null && displayName.isNotEmpty) {
+      userDisplayText = displayName;
+    } else if (email != null && email.isNotEmpty) {
+      userDisplayText = email.split('@').first;
+    }
 
     List<Widget> _pages = [
       Scaffold(
@@ -274,9 +297,7 @@ class _HomeScreenState extends State<HomeScreen> {
             padding: const EdgeInsets.all(8.0),
             child: Center(
               child: Text(
-                isAnonymous
-                    ? 'Guest User'
-                    : (user.email?.split('@').first ?? 'User'),
+                userDisplayText,
                 style: TextStyle(fontSize: 14),
               ),
             ),
@@ -297,11 +318,12 @@ class _HomeScreenState extends State<HomeScreen> {
           IconButton(
             icon: Icon(Icons.logout),
             onPressed: () async {
+              final wasAnonymous = isAnonymous;
               try {
                 await FirebaseAuth.instance.signOut();
 
                 // If user was anonymous, try to sign in anonymously again
-                if (isAnonymous) {
+                if (wasAnonymous) {
                   try {
                     final authService = Provider.of<AuthService>(context, listen: false);
                     await authService.signInAnonymously();
@@ -310,14 +332,18 @@ class _HomeScreenState extends State<HomeScreen> {
                     print("Error signing in anonymously after sign out: $e");
                   }
                 } else {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(content: Text('Signed out successfully')),
-                  );
+                  if (!_isDisposed && mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(content: Text('Signed out successfully')),
+                    );
+                  }
                 }
               } catch (e) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(content: Text('Error signing out: $e')),
-                );
+                if (!_isDisposed && mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(content: Text('Error signing out: $e')),
+                  );
+                }
               }
             },
           ),
@@ -337,9 +363,11 @@ class _HomeScreenState extends State<HomeScreen> {
         ],
         currentIndex: _selectedIndex,
         onTap: (index) {
-          setState(() {
-            _selectedIndex = index;
-          });
+          if (mounted) {
+            setState(() {
+              _selectedIndex = index;
+            });
+          }
         },
       ),
     );
