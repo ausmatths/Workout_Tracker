@@ -140,16 +140,13 @@ class FirestoreService {
     return groupWorkouts.doc(id).update(workout.toMap());
   }
 
-  // Get group workouts for user
   Stream<List<GroupWorkout>> getGroupWorkoutsForUser(String userId, {bool useSecureQuery = false}) {
     if (!_ensureAuthenticated()) {
-      // Return empty stream if not authenticated
       return Stream.value([]);
     }
 
     debugPrint('Getting group workouts for user: $userId (useSecureQuery: $useSecureQuery)');
 
-    // Always use the secure query now for better performance and security
     return groupWorkouts
         .where('participants', arrayContains: userId)
         .limit(50)
@@ -159,6 +156,9 @@ class FirestoreService {
       return snapshot.docs
           .map((doc) => GroupWorkout.fromMap(doc.data() as Map<String, dynamic>, doc.id))
           .toList();
+    }).handleError((error) {
+      debugPrint('Error fetching group workouts: $error');
+      return []; // Return an empty list or handle the error as needed
     });
   }
 
