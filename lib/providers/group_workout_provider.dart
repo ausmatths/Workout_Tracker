@@ -35,6 +35,9 @@ class GroupWorkoutProvider with ChangeNotifier {
       return;
     }
 
+    final userId = _authService.currentUser!.uid;
+    debugPrint('Attempting to fetch group workouts for user: $userId');
+
     _isLoading = true;
     notifyListeners();
 
@@ -42,11 +45,12 @@ class GroupWorkoutProvider with ChangeNotifier {
       // Cancel any existing subscription
       await _workoutsSubscription?.cancel();
 
-      // Create new subscription
+      // Use secure query that explicitly filters by participants
       _workoutsSubscription = _firestoreService
-          .getGroupWorkoutsForUser(_authService.currentUser!.uid)
+          .getGroupWorkoutsForUser(userId, useSecureQuery: true)
           .listen(
             (groupWorkouts) {
+          debugPrint('Successfully fetched ${groupWorkouts.length} group workouts');
           _groupWorkouts = groupWorkouts;
           _isLoading = false;
           notifyListeners();
@@ -57,12 +61,14 @@ class GroupWorkoutProvider with ChangeNotifier {
         onError: (error) {
           debugPrint('Error fetching group workouts: $error');
           _isLoading = false;
+          _groupWorkouts = []; // Clear on error
           notifyListeners();
         },
       );
     } catch (e) {
       debugPrint('Exception setting up group workouts listener: $e');
       _isLoading = false;
+      _groupWorkouts = []; // Clear on error
       notifyListeners();
     }
   }
@@ -99,6 +105,9 @@ class GroupWorkoutProvider with ChangeNotifier {
       return;
     }
 
+    final userId = _authService.currentUser!.uid;
+    debugPrint('Attempting to fetch invites for user: $userId');
+
     _isLoadingInvites = true;
     notifyListeners();
 
@@ -106,11 +115,12 @@ class GroupWorkoutProvider with ChangeNotifier {
       // Cancel any existing subscription
       await _invitesSubscription?.cancel();
 
-      // Create new subscription
+      // Use secure query that explicitly filters by invites
       _invitesSubscription = _firestoreService
-          .getGroupWorkoutInvitesForUser(_authService.currentUser!.uid)
+          .getGroupWorkoutInvitesForUser(userId, useSecureQuery: true)
           .listen(
             (invites) {
+          debugPrint('Successfully fetched ${invites.length} invites');
           _invites = invites;
           _isLoadingInvites = false;
           notifyListeners();
@@ -118,12 +128,14 @@ class GroupWorkoutProvider with ChangeNotifier {
         onError: (error) {
           debugPrint('Error fetching invites: $error');
           _isLoadingInvites = false;
+          _invites = []; // Clear on error
           notifyListeners();
         },
       );
     } catch (e) {
       debugPrint('Exception setting up invites listener: $e');
       _isLoadingInvites = false;
+      _invites = []; // Clear on error
       notifyListeners();
     }
   }

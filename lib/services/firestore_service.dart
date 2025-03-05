@@ -141,33 +141,47 @@ class FirestoreService {
   }
 
   // Get group workouts for user
-  Stream<List<GroupWorkout>> getGroupWorkoutsForUser(String userId) {
+  Stream<List<GroupWorkout>> getGroupWorkoutsForUser(String userId, {bool useSecureQuery = false}) {
     if (!_ensureAuthenticated()) {
       // Return empty stream if not authenticated
       return Stream.value([]);
     }
 
+    debugPrint('Getting group workouts for user: $userId (useSecureQuery: $useSecureQuery)');
+
+    // Always use the secure query now for better performance and security
     return groupWorkouts
         .where('participants', arrayContains: userId)
+        .limit(50)
         .snapshots()
-        .map((snapshot) => snapshot.docs
-        .map((doc) => GroupWorkout.fromMap(doc.data() as Map<String, dynamic>, doc.id))
-        .toList());
+        .map((snapshot) {
+      debugPrint('Fetched ${snapshot.docs.length} group workouts');
+      return snapshot.docs
+          .map((doc) => GroupWorkout.fromMap(doc.data() as Map<String, dynamic>, doc.id))
+          .toList();
+    });
   }
 
   // Get group workout invites for user
-  Stream<List<GroupWorkout>> getGroupWorkoutInvitesForUser(String userId) {
+  Stream<List<GroupWorkout>> getGroupWorkoutInvitesForUser(String userId, {bool useSecureQuery = false}) {
     if (!_ensureAuthenticated()) {
       // Return empty stream if not authenticated
       return Stream.value([]);
     }
 
+    debugPrint('Getting group workout invites for user: $userId (useSecureQuery: $useSecureQuery)');
+
+    // Always use the secure query now for better performance and security
     return groupWorkouts
         .where('invites', arrayContains: userId)
+        .limit(50)
         .snapshots()
-        .map((snapshot) => snapshot.docs
-        .map((doc) => GroupWorkout.fromMap(doc.data() as Map<String, dynamic>, doc.id))
-        .toList());
+        .map((snapshot) {
+      debugPrint('Fetched ${snapshot.docs.length} group workout invites');
+      return snapshot.docs
+          .map((doc) => GroupWorkout.fromMap(doc.data() as Map<String, dynamic>, doc.id))
+          .toList();
+    });
   }
 
   // Join group workout
@@ -230,16 +244,19 @@ class FirestoreService {
     }
 
     try {
+      debugPrint('Looking up workout by share code: $shareCode');
       final querySnapshot = await groupWorkouts
           .where('shareCode', isEqualTo: shareCode)
           .limit(1)
           .get();
 
       if (querySnapshot.docs.isEmpty) {
+        debugPrint('No workout found with share code: $shareCode');
         return null;
       }
 
       final doc = querySnapshot.docs.first;
+      debugPrint('Found workout with ID: ${doc.id} for share code: $shareCode');
       return GroupWorkout.fromMap(doc.data() as Map<String, dynamic>, doc.id);
     } catch (e) {
       debugPrint('Error getting workout by share code: $e');

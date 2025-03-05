@@ -64,6 +64,7 @@ class _GroupWorkoutListPageState extends State<GroupWorkoutListPage> with Single
         ],
       ),
       floatingActionButton: FloatingActionButton(
+        heroTag: 'groupWorkoutListFAB',
         onPressed: () async {
           final result = await Navigator.of(context).push(
             MaterialPageRoute(
@@ -72,7 +73,6 @@ class _GroupWorkoutListPageState extends State<GroupWorkoutListPage> with Single
           );
 
           if (result == true) {
-            // Refresh data if a new workout was created
             _refreshData();
           }
         },
