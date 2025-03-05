@@ -16,6 +16,8 @@ import 'widgets/workout_history_page.dart';
 import 'widgets/recent_performance_widget.dart';
 import 'widgets/auth_page.dart';
 import 'widgets/group_workout_list.dart';
+import 'widgets/workout_selection_page.dart';
+import 'widgets/create_group_workout.dart';
 
 void main() async {
   try {
@@ -250,6 +252,100 @@ class _HomeScreenState extends State<HomeScreen> {
     print("HomeScreen accessed by user: ${_currentUser.uid} (Anonymous: ${_currentUser.isAnonymous})");
   }
 
+  void _showJoinWorkoutDialog() {
+    final TextEditingController codeController = TextEditingController();
+    bool isJoining = false;
+
+    showDialog(
+      context: context,
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, setState) {
+            return AlertDialog(
+              title: Text('Join Group Workout'),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    'Enter the 6-digit code shared with you:',
+                    style: TextStyle(fontSize: 14),
+                  ),
+                  SizedBox(height: 16),
+                  TextField(
+                    controller: codeController,
+                    decoration: InputDecoration(
+                      labelText: 'Share Code',
+                      hintText: 'e.g., ABC123',
+                      border: OutlineInputBorder(),
+                    ),
+                    textCapitalization: TextCapitalization.characters,
+                    style: TextStyle(
+                      fontSize: 20,
+                      letterSpacing: 4,
+                    ),
+                    maxLength: 6,
+                  ),
+                  if (isJoining)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 16.0),
+                      child: CircularProgressIndicator(),
+                    ),
+                ],
+              ),
+              actions: [
+                TextButton(
+                  onPressed: isJoining ? null : () {
+                    Navigator.pop(context);
+                  },
+                  child: Text('CANCEL'),
+                ),
+                TextButton(
+                  onPressed: isJoining ? null : () async {
+                    final code = codeController.text.trim().toUpperCase();
+                    if (code.length != 6) {
+                      return;
+                    }
+
+                    setState(() {
+                      isJoining = true;
+                    });
+
+                    try {
+                      final provider = Provider.of<GroupWorkoutProvider>(context, listen: false);
+                      await provider.joinWorkoutByShareCode(code);
+
+                      Navigator.pop(context);
+
+                      // Switch to Group Workouts tab
+                      if (mounted) {
+                        this.setState(() {
+                          _selectedIndex = 1;
+                        });
+                      }
+
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(content: Text('Successfully joined workout!')),
+                      );
+                    } catch (e) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(content: Text('Error joining workout: $e')),
+                      );
+                    } finally {
+                      setState(() {
+                        isJoining = false;
+                      });
+                    }
+                  },
+                  child: Text('JOIN'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     // Get current user
@@ -350,6 +446,54 @@ class _HomeScreenState extends State<HomeScreen> {
         ],
       ),
       body: _pages[_selectedIndex],
+      floatingActionButton: FloatingActionButton(
+        onPressed: () {
+          if (_selectedIndex == 0) {
+            // On My Workouts tab - navigate to workout selection
+            Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (context) => WorkoutSelectionPage(),
+              ),
+            );
+          } else {
+            // On Group Workouts tab - show options
+            showModalBottomSheet(
+              context: context,
+              builder: (context) => Container(
+                padding: EdgeInsets.all(16),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    ListTile(
+                      leading: Icon(Icons.add),
+                      title: Text('Create New Group Workout'),
+                      onTap: () {
+                        Navigator.pop(context);
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (context) => CreateGroupWorkoutPage(),
+                          ),
+                        );
+                      },
+                    ),
+                    ListTile(
+                      leading: Icon(Icons.group_add),
+                      title: Text('Join Group Workout'),
+                      onTap: () {
+                        Navigator.pop(context);
+                        _showJoinWorkoutDialog();
+                      },
+                    ),
+                  ],
+                ),
+              ),
+            );
+          }
+        },
+        child: Icon(Icons.add),
+      ),
       bottomNavigationBar: BottomNavigationBar(
         items: const <BottomNavigationBarItem>[
           BottomNavigationBarItem(

@@ -1,3 +1,4 @@
+import 'dart:math';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart';
@@ -199,5 +200,139 @@ class FirestoreService {
     return groupWorkouts.doc(workoutId).update({
       'invites': FieldValue.arrayUnion(userIds)
     });
+  }
+
+  // Submit results for a group workout
+  Future<void> submitGroupWorkoutResults(
+      String workoutId, String userId, Map<String, double> results) async {
+    if (!_ensureAuthenticated()) {
+      throw FirebaseException(
+          plugin: 'cloud_firestore',
+          code: 'permission-denied',
+          message: 'Not authenticated'
+      );
+    }
+
+    // Update just this user's results
+    return groupWorkouts.doc(workoutId).update({
+      'results.$userId': results,
+    });
+  }
+
+  // Get group workout by share code
+  Future<GroupWorkout?> getGroupWorkoutByShareCode(String shareCode) async {
+    if (!_ensureAuthenticated()) {
+      throw FirebaseException(
+          plugin: 'cloud_firestore',
+          code: 'permission-denied',
+          message: 'Not authenticated'
+      );
+    }
+
+    try {
+      final querySnapshot = await groupWorkouts
+          .where('shareCode', isEqualTo: shareCode)
+          .limit(1)
+          .get();
+
+      if (querySnapshot.docs.isEmpty) {
+        return null;
+      }
+
+      final doc = querySnapshot.docs.first;
+      return GroupWorkout.fromMap(doc.data() as Map<String, dynamic>, doc.id);
+    } catch (e) {
+      debugPrint('Error getting workout by share code: $e');
+      rethrow;
+    }
+  }
+
+  // Generate unique share code for a group workout
+  Future<String> generateShareCodeForWorkout(String workoutId) async {
+    if (!_ensureAuthenticated()) {
+      throw FirebaseException(
+          plugin: 'cloud_firestore',
+          code: 'permission-denied',
+          message: 'Not authenticated'
+      );
+    }
+
+    // Generate a unique 6-character code
+    final random = Random();
+    const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // Excluded confusing chars
+    String code;
+    bool isUnique = false;
+
+    do {
+      code = String.fromCharCodes(
+          Iterable.generate(6, (_) => chars.codeUnitAt(random.nextInt(chars.length)))
+      );
+
+      final querySnapshot = await groupWorkouts
+          .where('shareCode', isEqualTo: code)
+          .limit(1)
+          .get();
+
+      isUnique = querySnapshot.docs.isEmpty;
+    } while (!isUnique);
+
+    // Update the workout with the share code
+    await groupWorkouts.doc(workoutId).update({'shareCode': code});
+    return code;
+  }
+
+  // Mark a group workout as completed
+  Future<void> markGroupWorkoutCompleted(String workoutId) async {
+    if (!_ensureAuthenticated()) {
+      throw FirebaseException(
+          plugin: 'cloud_firestore',
+          code: 'permission-denied',
+          message: 'Not authenticated'
+      );
+    }
+
+    return groupWorkouts.doc(workoutId).update({
+      'isCompleted': true
+    });
+  }
+
+  // Get all participants' names for a group workout
+  Future<Map<String, String>> getParticipantNames(List<String> userIds) async {
+    if (!_ensureAuthenticated()) {
+      throw FirebaseException(
+          plugin: 'cloud_firestore',
+          code: 'permission-denied',
+          message: 'Not authenticated'
+      );
+    }
+
+    Map<String, String> names = {};
+
+    // Batch get all users
+    if (userIds.isNotEmpty) {
+      // Split into chunks of 10 for batching (Firestore limit)
+      for (int i = 0; i < userIds.length; i += 10) {
+        final end = (i + 10 < userIds.length) ? i + 10 : userIds.length;
+        final chunk = userIds.sublist(i, end);
+
+        try {
+          final snapshots = await Future.wait(
+              chunk.map((id) => users.doc(id).get())
+          );
+
+          for (final doc in snapshots) {
+            if (doc.exists) {
+              final data = doc.data() as Map<String, dynamic>;
+              final name = data['displayName'] ?? 'User ${doc.id.substring(0, 5)}';
+              names[doc.id] = name;
+            }
+          }
+        } catch (e) {
+          debugPrint('Error fetching user names: $e');
+        }
+      }
+    }
+
+    return names;
   }
 }

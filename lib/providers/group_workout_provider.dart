@@ -12,6 +12,7 @@ class GroupWorkoutProvider with ChangeNotifier {
   List<GroupWorkout> _invites = [];
   bool _isLoading = false;
   bool _isLoadingInvites = false;
+  Map<String, String> _participantNames = {};
 
   // Stream subscriptions to manage
   StreamSubscription<List<GroupWorkout>>? _workoutsSubscription;
@@ -21,6 +22,7 @@ class GroupWorkoutProvider with ChangeNotifier {
   List<GroupWorkout> get invites => _invites;
   bool get isLoading => _isLoading;
   bool get isLoadingInvites => _isLoadingInvites;
+  Map<String, String> get participantNames => _participantNames;
 
   // Check authentication status
   bool get isAuthenticated => _authService.currentUser != null;
@@ -48,6 +50,9 @@ class GroupWorkoutProvider with ChangeNotifier {
           _groupWorkouts = groupWorkouts;
           _isLoading = false;
           notifyListeners();
+
+          // Fetch participant names
+          _fetchParticipantNames(groupWorkouts);
         },
         onError: (error) {
           debugPrint('Error fetching group workouts: $error');
@@ -59,6 +64,30 @@ class GroupWorkoutProvider with ChangeNotifier {
       debugPrint('Exception setting up group workouts listener: $e');
       _isLoading = false;
       notifyListeners();
+    }
+  }
+
+  Future<void> _fetchParticipantNames(List<GroupWorkout> workouts) async {
+    if (workouts.isEmpty) return;
+
+    try {
+      // Collect all unique user IDs from participants
+      Set<String> allUserIds = {};
+      for (var workout in workouts) {
+        allUserIds.addAll(workout.participants);
+        if (workout.results != null) {
+          allUserIds.addAll(workout.results!.keys);
+        }
+      }
+
+      // Fetch names for these users
+      if (allUserIds.isNotEmpty) {
+        final names = await _firestoreService.getParticipantNames(allUserIds.toList());
+        _participantNames.addAll(names);
+        notifyListeners();
+      }
+    } catch (e) {
+      debugPrint('Error fetching participant names: $e');
     }
   }
 
@@ -99,6 +128,47 @@ class GroupWorkoutProvider with ChangeNotifier {
     }
   }
 
+  // Create a new group workout with type
+  Future<String> createGroupWorkoutWithType(
+      String name,
+      String workoutPlanId,
+      DateTime scheduledDate,
+      GroupWorkoutType type) async {
+    if (!isAuthenticated) {
+      debugPrint('GroupWorkoutProvider: Cannot create workout - not authenticated');
+      throw Exception('You must be logged in to create a group workout');
+    }
+
+    final userId = _authService.currentUser!.uid;
+
+    final workout = GroupWorkout(
+      name: name,
+      creatorId: userId,
+      scheduledDate: scheduledDate,
+      participants: [userId], // Creator is automatically a participant
+      invites: [],
+      workoutPlanId: workoutPlanId,
+      type: type,
+      results: {},
+    );
+
+    try {
+      final workoutId = await _firestoreService.createGroupWorkout(workout);
+
+      // Generate a share code for the workout
+      final shareCode = await _firestoreService.generateShareCodeForWorkout(workoutId);
+
+      // Refresh data
+      fetchGroupWorkouts();
+
+      return shareCode;
+    } catch (e) {
+      debugPrint('Error creating group workout: $e');
+      rethrow;
+    }
+  }
+
+  // Legacy method for backward compatibility
   Future<void> createGroupWorkout(GroupWorkout workout) async {
     if (!isAuthenticated) {
       debugPrint('GroupWorkoutProvider: Cannot create workout - not authenticated');
@@ -107,6 +177,7 @@ class GroupWorkoutProvider with ChangeNotifier {
 
     try {
       await _firestoreService.createGroupWorkout(workout);
+      fetchGroupWorkouts();
     } catch (e) {
       debugPrint('Error creating group workout: $e');
       rethrow;
@@ -122,8 +193,42 @@ class GroupWorkoutProvider with ChangeNotifier {
     try {
       await _firestoreService.joinGroupWorkout(
           workoutId, _authService.currentUser!.uid);
+      fetchGroupWorkouts();
+      fetchInvites();
     } catch (e) {
       debugPrint('Error joining group workout: $e');
+      rethrow;
+    }
+  }
+
+  // Join a group workout by share code
+  Future<void> joinWorkoutByShareCode(String shareCode) async {
+    if (!isAuthenticated) {
+      debugPrint('GroupWorkoutProvider: Cannot join workout - not authenticated');
+      throw Exception('You must be logged in to join a group workout');
+    }
+
+    try {
+      // Find the workout with the share code
+      final workout = await _firestoreService.getGroupWorkoutByShareCode(shareCode);
+
+      if (workout == null) {
+        throw Exception('No workout found with that code');
+      }
+
+      // Check if already a participant
+      if (workout.participants.contains(_authService.currentUser!.uid)) {
+        throw Exception('You are already a participant in this workout');
+      }
+
+      // Join the workout
+      await _firestoreService.joinGroupWorkout(workout.id!, _authService.currentUser!.uid);
+
+      // Refresh data
+      fetchGroupWorkouts();
+      fetchInvites();
+    } catch (e) {
+      debugPrint('Error joining workout by share code: $e');
       rethrow;
     }
   }
@@ -142,18 +247,10 @@ class GroupWorkoutProvider with ChangeNotifier {
             .where((id) => id != _authService.currentUser!.uid)
             .toList();
 
-        final updatedWorkout = GroupWorkout(
-          id: workout.id,
-          name: workout.name,
-          creatorId: workout.creatorId,
-          scheduledDate: workout.scheduledDate,
-          participants: workout.participants,
-          invites: updatedInvites,
-          workoutPlanId: workout.workoutPlanId,
-          isCompleted: workout.isCompleted,
-        );
+        final updatedWorkout = workout.copyWith(invites: updatedInvites);
 
         await _firestoreService.updateGroupWorkout(workoutId, updatedWorkout);
+        fetchInvites();
       }
     } catch (e) {
       debugPrint('Error declining invite: $e');
@@ -229,6 +326,89 @@ class GroupWorkoutProvider with ChangeNotifier {
       debugPrint('Error inviting users to workout: $e');
       rethrow;
     }
+  }
+
+  // Submit results for a group workout
+  Future<void> submitWorkoutResults(String workoutId, Map<String, double> results) async {
+    if (!isAuthenticated) {
+      debugPrint('GroupWorkoutProvider: Cannot submit results - not authenticated');
+      throw Exception('You must be logged in to submit workout results');
+    }
+
+    try {
+      await _firestoreService.submitGroupWorkoutResults(
+          workoutId,
+          _authService.currentUser!.uid,
+          results
+      );
+
+      // Refresh data
+      fetchGroupWorkouts();
+    } catch (e) {
+      debugPrint('Error submitting workout results: $e');
+      rethrow;
+    }
+  }
+
+  // Get a specific workout by ID
+  Future<GroupWorkout?> getWorkoutById(String workoutId) async {
+    if (!isAuthenticated) {
+      debugPrint('GroupWorkoutProvider: Cannot get workout - not authenticated');
+      return null;
+    }
+
+    try {
+      return await _firestoreService.getGroupWorkout(workoutId);
+    } catch (e) {
+      debugPrint('Error getting workout: $e');
+      rethrow;
+    }
+  }
+
+  // Get a workout by share code
+  Future<GroupWorkout?> getWorkoutByShareCode(String shareCode) async {
+    if (!isAuthenticated) {
+      debugPrint('GroupWorkoutProvider: Cannot get workout - not authenticated');
+      return null;
+    }
+
+    try {
+      return await _firestoreService.getGroupWorkoutByShareCode(shareCode);
+    } catch (e) {
+      debugPrint('Error getting workout by share code: $e');
+      rethrow;
+    }
+  }
+
+  // Mark a workout as completed
+  Future<void> markWorkoutCompleted(String workoutId) async {
+    if (!isAuthenticated) {
+      debugPrint('GroupWorkoutProvider: Cannot update workout - not authenticated');
+      return;
+    }
+
+    try {
+      await _firestoreService.markGroupWorkoutCompleted(workoutId);
+      fetchGroupWorkouts();
+    } catch (e) {
+      debugPrint('Error marking workout as completed: $e');
+      rethrow;
+    }
+  }
+
+  // Get participant name by ID
+  String getParticipantName(String userId) {
+    if (_participantNames.containsKey(userId)) {
+      return _participantNames[userId]!;
+    }
+
+    // If we don't have the name yet, return a generic name and try to fetch it
+    final currentUserId = _authService.currentUser?.uid;
+    if (userId == currentUserId) {
+      return 'You';
+    }
+
+    return 'User ${userId.substring(0, 5)}';
   }
 
   // Important: clean up subscriptions when the provider is disposed

@@ -1,9 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../models/group_workout.dart';
+import '../models/workout_plan.dart';
 import '../providers/group_workout_provider.dart';
+import '../providers/workout_provider.dart';
 import '../services/auth_service.dart';
 import 'create_group_workout.dart';
+import 'group_workout_results_page.dart';
+import 'workout_recording_page.dart';
 
 class GroupWorkoutListPage extends StatefulWidget {
   @override
@@ -111,54 +115,173 @@ class _GroupWorkoutListPageState extends State<GroupWorkoutListPage> with Single
             itemCount: provider.groupWorkouts.length,
             itemBuilder: (context, index) {
               final workout = provider.groupWorkouts[index];
-              final userId = _getCurrentUserId();
-
-              return Card(
-                margin: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                child: ListTile(
-                  title: Text(
-                    workout.name,
-                    style: TextStyle(fontWeight: FontWeight.bold),
-                  ),
-                  subtitle: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text('Date: ${_formatDate(workout.scheduledDate)}'),
-                      Text('Participants: ${workout.participants.length}'),
-                      if (workout.invites.isNotEmpty)
-                        Text('Pending invites: ${workout.invites.length}'),
-                    ],
-                  ),
-                  trailing: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      if (userId != null && userId == workout.creatorId)
-                        IconButton(
-                          icon: Icon(Icons.person_add),
-                          tooltip: 'Invite users',
-                          onPressed: () {
-                            if (workout.id != null) {
-                              _showInviteDialog(context, workout.id!);
-                            }
-                          },
-                        ),
-                      if (workout.isCompleted)
-                        Icon(Icons.check_circle, color: Colors.green)
-                      else
-                        Icon(Icons.timelapse, color: Colors.orange),
-                    ],
-                  ),
-                  isThreeLine: true,
-                  onTap: () {
-                    debugPrint('Tapped on group workout: ${workout.id ?? 'unknown'}');
-                    _showGroupWorkoutDetails(context, workout);
-                  },
-                ),
-              );
+              return _buildWorkoutItem(context, workout);
             },
           ),
         );
       },
+    );
+  }
+
+  Widget _buildWorkoutItem(BuildContext context, GroupWorkout workout) {
+    final workoutProvider = Provider.of<WorkoutProvider>(context, listen: false);
+    // Look up workout plan by name instead of using a non-existent getWorkoutPlanById method
+    final workoutPlan = workoutProvider.plans.firstWhere(
+          (plan) => plan.name == workout.workoutPlanId,
+      orElse: () => WorkoutPlan(name: "Unknown", exercises: []),
+    );
+
+    // Check if current user has submitted results
+    final authService = Provider.of<AuthService>(context, listen: false);
+    final userId = authService.currentUser?.uid;
+    final hasSubmittedResults = userId != null &&
+        workout.results != null &&
+        workout.results!.containsKey(userId) &&
+        workout.results![userId]!.isNotEmpty;
+
+    final isCreator = userId != null && userId == workout.creatorId;
+
+    return Card(
+      margin: EdgeInsets.symmetric(vertical: 8, horizontal: 16),
+      child: Padding(
+        padding: EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        workout.name,
+                        style: Theme.of(context).textTheme.titleMedium,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      if (workoutPlan != null)
+                        Text(
+                          workoutPlan.name,
+                          style: TextStyle(
+                            color: Colors.grey.shade700,
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+                _buildTypeChip(workout.type),
+              ],
+            ),
+            SizedBox(height: 12),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text('Date: ${_formatDate(workout.scheduledDate)}'),
+                Text('Participants: ${workout.participants.length}'),
+              ],
+            ),
+            if (workout.invites.isNotEmpty && isCreator)
+              Padding(
+                padding: const EdgeInsets.only(top: 4.0),
+                child: Text('Pending invites: ${workout.invites.length}'),
+              ),
+            SizedBox(height: 12),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                if (workout.isCompleted)
+                  Text('Completed', style: TextStyle(color: Colors.green))
+                else
+                  Text(
+                    hasSubmittedResults ? 'Results Submitted' : 'Waiting for Results',
+                    style: TextStyle(
+                      color: hasSubmittedResults ? Colors.green : Colors.orange,
+                    ),
+                  ),
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    if (isCreator && !workout.isCompleted)
+                      IconButton(
+                        icon: Icon(Icons.person_add),
+                        tooltip: 'Invite users',
+                        onPressed: () {
+                          if (workout.id != null) {
+                            _showInviteDialog(context, workout.id!);
+                          }
+                        },
+                      ),
+                    if (workoutPlan != null && workout.id != null)
+                      ElevatedButton(
+                        onPressed: hasSubmittedResults
+                            ? () {
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (context) => GroupWorkoutResultsPage(
+                                workoutId: workout.id!,
+                              ),
+                            ),
+                          );
+                        }
+                            : () {
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (context) => WorkoutRecordingPage(
+                                plan: workoutPlan,
+                                groupWorkoutCode: workout.shareCode,
+                                workoutType: workout.type,
+                              ),
+                            ),
+                          );
+                        },
+                        child: Text(
+                          hasSubmittedResults ? 'View Results' : 'Record Workout',
+                        ),
+                      ),
+                  ],
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildTypeChip(GroupWorkoutType type) {
+    final isCollaborative = type == GroupWorkoutType.collaborative;
+
+    return Container(
+      padding: EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+      decoration: BoxDecoration(
+        color: isCollaborative ? Colors.green.shade100 : Colors.orange.shade100,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+          color: isCollaborative ? Colors.green.shade600 : Colors.orange.shade600,
+        ),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(
+            isCollaborative ? Icons.group_work : Icons.emoji_events,
+            size: 16,
+            color: isCollaborative ? Colors.green.shade800 : Colors.orange.shade800,
+          ),
+          SizedBox(width: 4),
+          Text(
+            isCollaborative ? 'Collaborative' : 'Competitive',
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.bold,
+              color: isCollaborative ? Colors.green.shade800 : Colors.orange.shade800,
+            ),
+          ),
+        ],
+      ),
     );
   }
 
@@ -202,7 +325,13 @@ class _GroupWorkoutListPageState extends State<GroupWorkoutListPage> with Single
                     invite.name,
                     style: TextStyle(fontWeight: FontWeight.bold),
                   ),
-                  subtitle: Text('Date: ${_formatDate(invite.scheduledDate)}'),
+                  subtitle: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text('Date: ${_formatDate(invite.scheduledDate)}'),
+                      _buildTypeChip(invite.type),
+                    ],
+                  ),
                   trailing: Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
@@ -242,6 +371,7 @@ class _GroupWorkoutListPageState extends State<GroupWorkoutListPage> with Single
                       ),
                     ],
                   ),
+                  isThreeLine: true,
                   onTap: () {
                     _showGroupWorkoutDetails(context, invite);
                   },
@@ -339,15 +469,15 @@ class _GroupWorkoutListPageState extends State<GroupWorkoutListPage> with Single
   }
 
   void _showGroupWorkoutDetails(BuildContext context, GroupWorkout workout) {
-    // Log click for debugging
-    debugPrint('Showing details for workout: ${workout.id ?? 'unknown'}');
-
     // Navigate to details page
     Navigator.of(context).push(
       MaterialPageRoute(
         builder: (context) => GroupWorkoutDetailsPage(workout: workout),
       ),
-    );
+    ).then((_) {
+      // Refresh data when coming back from details page
+      _refreshData();
+    });
   }
 
   String? _getCurrentUserId() {
@@ -370,12 +500,38 @@ class GroupWorkoutDetailsPage extends StatelessWidget {
   Widget build(BuildContext context) {
     final authService = Provider.of<AuthService>(context, listen: false);
     final currentUserId = authService.getUserId();
-    // Fixed: Only compare if currentUserId is not null
+    final workoutProvider = Provider.of<WorkoutProvider>(context, listen: false);
+
+    // Look up the workout plan
+    final workoutPlan = workoutProvider.plans.firstWhere(
+          (plan) => plan.name == workout.workoutPlanId,
+      orElse: () => WorkoutPlan(name: "Unknown", exercises: []),
+    );
+
+    // Only compare if currentUserId is not null
     final isCreator = currentUserId != null && workout.creatorId == currentUserId;
+
+    // Check if user has submitted results
+    final hasSubmittedResults = currentUserId != null &&
+        workout.results != null &&
+        workout.results!.containsKey(currentUserId) &&
+        workout.results![currentUserId]!.isNotEmpty;
 
     return Scaffold(
       appBar: AppBar(
         title: Text(workout.name),
+        actions: [
+          if (workout.type == GroupWorkoutType.collaborative)
+            Chip(
+              label: Text('Collaborative'),
+              backgroundColor: Colors.green.shade100,
+            )
+          else
+            Chip(
+              label: Text('Competitive'),
+              backgroundColor: Colors.orange.shade100,
+            ),
+        ],
       ),
       body: Padding(
         padding: EdgeInsets.all(16),
@@ -411,6 +567,27 @@ class GroupWorkoutDetailsPage extends StatelessWidget {
                         ),
                       ],
                     ),
+                    if (workout.shareCode != null) ...[
+                      SizedBox(height: 16),
+                      Row(
+                        children: [
+                          Icon(Icons.share, color: Colors.blue),
+                          SizedBox(width: 8),
+                          SelectableText(
+                            'Share Code: ${workout.shareCode}',
+                            style: TextStyle(
+                              fontSize: 16,
+                              fontWeight: FontWeight.bold,
+                              color: Colors.blue,
+                            ),
+                          ),
+                        ],
+                      ),
+                      Text(
+                        'Share this code with friends to join this workout',
+                        style: TextStyle(fontSize: 12, fontStyle: FontStyle.italic),
+                      ),
+                    ],
                   ],
                 ),
               ),
@@ -436,7 +613,7 @@ class GroupWorkoutDetailsPage extends StatelessWidget {
                     leading: CircleAvatar(
                       child: Icon(Icons.person),
                     ),
-                    title: Text(isCurrentUser ? 'You' : 'User $participantId'),
+                    title: Text(isCurrentUser ? 'You' : 'User ${participantId.substring(0, 6)}'),
                     subtitle: participantId == workout.creatorId
                         ? Text('Creator', style: TextStyle(color: Colors.blue))
                         : null,
@@ -465,7 +642,7 @@ class GroupWorkoutDetailsPage extends StatelessWidget {
                         child: Icon(Icons.mail_outline),
                         backgroundColor: Colors.amber.shade100,
                       ),
-                      title: Text('User $inviteId'),
+                      title: Text('User ${inviteId.substring(0, 6)}'),
                       subtitle: Text('Awaiting response'),
                     );
                   },
@@ -487,15 +664,30 @@ class GroupWorkoutDetailsPage extends StatelessWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text('Plan ID: ${workout.workoutPlanId}'),
-                    // Add more workout plan details here
-                    SizedBox(height: 8),
-                    ElevatedButton(
-                      onPressed: () {
-                        // Navigate to view workout plan details
-                      },
-                      child: Text('View Plan Details'),
-                    ),
+                    Text('Plan: ${workout.workoutPlanId}'),
+                    if (workoutPlan != null) ...[
+                      SizedBox(height: 8),
+                      Text('Exercises: ${workoutPlan.exercises.length}'),
+                      SizedBox(height: 16),
+                      ListView.builder(
+                          shrinkWrap: true,
+                          physics: NeverScrollableScrollPhysics(),
+                          itemCount: workoutPlan.exercises.length > 3 ? 3 : workoutPlan.exercises.length,
+                          itemBuilder: (context, index) {
+                            final exercise = workoutPlan.exercises[index];
+                            return ListTile(
+                              dense: true,
+                              title: Text(exercise.name),
+                              subtitle: Text('Target: ${exercise.targetOutput} ${exercise.unit}'),
+                            );
+                          }
+                      ),
+                      if (workoutPlan.exercises.length > 3)
+                        Padding(
+                          padding: const EdgeInsets.only(top: 8.0),
+                          child: Text('+ ${workoutPlan.exercises.length - 3} more exercises'),
+                        ),
+                    ],
                   ],
                 ),
               ),
@@ -505,16 +697,69 @@ class GroupWorkoutDetailsPage extends StatelessWidget {
 
             // Action buttons
             if (!workout.isCompleted) ...[
+              if (hasSubmittedResults) ...[
+                ElevatedButton.icon(
+                  icon: Icon(Icons.bar_chart),
+                  label: Text('View Results'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.blue,
+                    foregroundColor: Colors.white,
+                    minimumSize: Size(double.infinity, 50),
+                  ),
+                  onPressed: () {
+                    if (workout.id != null) {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (context) => GroupWorkoutResultsPage(
+                            workoutId: workout.id!,
+                          ),
+                        ),
+                      );
+                    }
+                  },
+                ),
+              ] else if (workoutPlan != null) ...[
+                ElevatedButton.icon(
+                  icon: Icon(Icons.fitness_center),
+                  label: Text('Start Workout'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.green,
+                    foregroundColor: Colors.white,
+                    minimumSize: Size(double.infinity, 50),
+                  ),
+                  onPressed: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) => WorkoutRecordingPage(
+                          plan: workoutPlan,
+                          groupWorkoutCode: workout.shareCode,
+                          workoutType: workout.type,
+                        ),
+                      ),
+                    );
+                  },
+                ),
+              ],
+            ] else if (workout.id != null) ...[
               ElevatedButton.icon(
-                icon: Icon(Icons.fitness_center),
-                label: Text('Start Workout'),
+                icon: Icon(Icons.bar_chart),
+                label: Text('View Results'),
                 style: ElevatedButton.styleFrom(
-                  backgroundColor: Colors.green,
+                  backgroundColor: Colors.blue,
                   foregroundColor: Colors.white,
                   minimumSize: Size(double.infinity, 50),
                 ),
                 onPressed: () {
-                  // Navigate to start the workout
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (context) => GroupWorkoutResultsPage(
+                        workoutId: workout.id!,
+                      ),
+                    ),
+                  );
                 },
               ),
             ],
