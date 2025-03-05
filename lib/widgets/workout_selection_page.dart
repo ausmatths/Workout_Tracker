@@ -19,7 +19,10 @@ class _WorkoutSelectionPageState extends State<WorkoutSelectionPage> {
   @override
   void initState() {
     super.initState();
-    _loadWorkoutPlans();
+    // Access provider after build is complete
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _loadWorkoutPlans();
+    });
   }
 
   Future<void> _loadWorkoutPlans() async {

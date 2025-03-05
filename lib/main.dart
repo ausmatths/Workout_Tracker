@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:workout_tracker/providers/workout_provider.dart';
 import 'firebase_options.dart';
 import 'data/workout_data.dart';
 import 'data/storage_service.dart';
@@ -18,6 +19,7 @@ import 'widgets/auth_page.dart';
 import 'widgets/group_workout_list.dart';
 import 'widgets/workout_selection_page.dart';
 import 'widgets/create_group_workout.dart';
+import 'data/repositories/workout_repository.dart';
 
 void main() async {
   try {
@@ -119,6 +121,9 @@ class MyApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // Create a WorkoutRepository instance
+    final workoutRepository = WorkoutRepository(storage);
+
     return MultiProvider(
       providers: [
         ChangeNotifierProvider(
@@ -126,6 +131,10 @@ class MyApp extends StatelessWidget {
         ),
         ChangeNotifierProvider(
           create: (_) => GroupWorkoutProvider(),
+        ),
+        // Add WorkoutProvider with the repository
+        ChangeNotifierProvider(
+          create: (_) => WorkoutProvider(workoutRepository),
         ),
         Provider.value(value: service),
         Provider.value(value: authService),
