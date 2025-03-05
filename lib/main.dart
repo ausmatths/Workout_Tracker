@@ -456,6 +456,8 @@ class _HomeScreenState extends State<HomeScreen> {
       ),
       body: _pages[_selectedIndex],
       floatingActionButton: FloatingActionButton(
+        // Add a unique heroTag to fix the multiple heroes error
+        heroTag: 'homeScreenFAB',
         onPressed: () {
           if (_selectedIndex == 0) {
             // On My Workouts tab - navigate to workout selection
